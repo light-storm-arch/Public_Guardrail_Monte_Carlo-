@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Financial Planning Calculator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body{margin:0;padding:0}
+    .font-display{font-family:'Crimson Pro',serif}
+    input[type="number"],input[type="text"]{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;color:white;width:100%;transition:all 0.2s}
+    input[type="number"]:focus,input[type="text"]:focus{outline:none;border-color:#e8b059;box-shadow:0 0 0 3px rgba(232,176,89,0.2)}
+    input[type="range"]{-webkit-appearance:none;width:100%;height:8px;border-radius:4px;background:rgba(255,255,255,0.1)}
+    input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#e8b059;cursor:pointer}
+    .checkbox-custom{appearance:none;width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-radius:4px;cursor:pointer}
+    .checkbox-custom:checked{background:#e8b059;border-color:#e8b059}
+    .card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px}
+    .card-accent{border-left:4px solid #e8b059}
+    .btn-primary{background:linear-gradient(135deg,#e8b059 0%,#d4a04a 100%);color:#1a1a2e;font-weight:600;padding:14px 32px;border-radius:10px;border:none;cursor:pointer}
+    .btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+    .btn-secondary{background:rgba(255,255,255,0.1);color:white;font-weight:500;padding:14px 32px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);cursor:pointer}
+    .result-card{background:linear-gradient(135deg,rgba(232,176,89,0.15) 0%,rgba(232,176,89,0.05) 100%);border:1px solid rgba(232,176,89,0.3)}
+    .guardrail-upper{background:linear-gradient(135deg,rgba(76,175,80,0.15) 0%,rgba(76,175,80,0.05) 100%);border:1px solid rgba(76,175,80,0.3)}
+    .guardrail-lower{background:linear-gradient(135deg,rgba(255,152,0,0.15) 0%,rgba(255,152,0,0.05) 100%);border:1px solid rgba(255,152,0,0.3)}
+    .data-table{width:100%;border-collapse:collapse}
+    .data-table th{background:rgba(232,176,89,0.2);padding:12px 10px;text-align:right;font-weight:600;font-size:12px;text-transform:uppercase;color:white}
+    .data-table th:first-child{text-align:left}
+    .data-table td{padding:10px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13px;color:white}
+    .data-table td:first-child{text-align:left}
+    .loading-spinner{width:24px;height:24px;border:3px solid rgba(26,26,46,0.3);border-top-color:#1a1a2e;border-radius:50%;animation:spin 1s linear infinite;display:inline-block}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useCallback, useEffect } = React;
+
+const normalRandom = (mean, stdDev) => { const u1 = Math.random(), u2 = Math.random(); return mean + Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * stdDev; };
+const formatCurrency = (v) => v == null || isNaN(v) ? '$0' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
+const formatNumberWithCommas = (v) => v == null || v === '' ? '' : v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const inflateValue = (base, rate, years) => base * Math.pow(1 + rate, years);
+
+const CurrencyInput = ({ value, onChange }) => {
+  const [display, setDisplay] = useState(formatNumberWithCommas(value));
+  const handleChange = (e) => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d+$/.test(raw)) { setDisplay(formatNumberWithCommas(raw)); onChange(parseInt(raw, 10) || 0); } };
+  useEffect(() => setDisplay(formatNumberWithCommas(value)), [value]);
+  return <input type="text" value={display} onChange={handleChange} onBlur={() => setDisplay(formatNumberWithCommas(value))} />;
+};
+
+const PercentageInput = ({ value, onChange }) => {
+  const [display, setDisplay] = useState(value.toString());
+  const handleChange = (e) => { const v = e.target.value; if (v === '' || /^-?\d*\.?\d*$/.test(v)) { setDisplay(v); const n = parseFloat(v); if (!isNaN(n)) onChange(n); else if (v === '' || v === '-') onChange(0); } };
+  useEffect(() => { const n = parseFloat(display); if (isNaN(n) || n !== value) setDisplay(value.toString()); }, [value]);
+  return <input type="text" value={display} onChange={handleChange} onBlur={() => { const n = parseFloat(display); setDisplay(isNaN(n) ? value.toString() : n.toString()); }} />;
+};
+
+const PercentageInputNullable = ({ value, onChange, placeholder }) => {
+  const [display, setDisplay] = useState(value !== null ? (value * 100).toString() : '');
+  const handleChange = (e) => { const v = e.target.value; if (v === '' || /^-?\d*\.?\d*$/.test(v)) { setDisplay(v); if (v === '') onChange(null); else { const n = parseFloat(v); if (!isNaN(n)) onChange(n / 100); } } };
+  useEffect(() => { if (value === null && display !== '') setDisplay(''); else if (value !== null) { const n = parseFloat(display), exp = value * 100; if (isNaN(n) || Math.abs(n - exp) > 0.0001) setDisplay(exp.toString()); } }, [value]);
+  return <input type="text" value={display} onChange={handleChange} onBlur={() => { if (display === '') onChange(null); else { const n = parseFloat(display); setDisplay(isNaN(n) ? (value !== null ? (value * 100).toString() : '') : n.toString()); } }} placeholder={placeholder} />;
+};
+
+const runSimulation = (params, numSims) => {
+  const { portfolioValue, planLength, expectedReturn, stdDev, baseSpending, baseInflation, goals, incomeSources, currentYear } = params;
+  const results = [];
+  for (let sim = 0; sim < numSims; sim++) {
+    let portfolio = portfolioValue; let success = true;
+    for (let year = 0; year < planLength; year++) {
+      const calYear = currentYear + year;
+      const yearSpending = year === 0 ? baseSpending : inflateValue(baseSpending, baseInflation, year);
+      let yearGoals = 0;
+      goals.forEach((g) => { const start = g.startYear, end = g.continueThrough ? currentYear + planLength : g.endYear, freq = g.frequency || 0, inf = g.customInflation !== null ? g.customInflation : baseInflation; if (freq === 0) return; if (calYear >= start && calYear <= end) { if (freq === 1) { if (calYear === start) yearGoals += year === 0 ? g.amount : inflateValue(g.amount, inf, year); } else { if ((calYear - start) % freq === 0) yearGoals += year === 0 ? g.amount : inflateValue(g.amount, inf, year); } } });
+      let yearIncome = 0;
+      incomeSources.forEach((i) => { const start = i.startYear, end = i.continueThrough ? currentYear + planLength : i.endYear, inf = i.customInflation !== null ? i.customInflation : baseInflation; if (calYear >= start && calYear <= end) yearIncome += year === 0 ? i.amount : inflateValue(i.amount, inf, year); });
+      const netWithdrawal = yearSpending + yearGoals - yearIncome;
+      const yearReturn = normalRandom(expectedReturn, stdDev), halfReturn = Math.pow(1 + yearReturn, 0.5) - 1;
+      portfolio *= 1 + halfReturn; portfolio -= netWithdrawal;
+      if (portfolio < 0) { portfolio = 0; success = false; break; }
+      portfolio *= 1 + halfReturn; portfolio = Math.max(0, portfolio);
+    }
+    results.push({ success, endingValue: portfolio });
+  }
+  const successRate = results.filter(r => r.success).length / numSims;
+  const endingValues = results.map(r => r.endingValue).sort((a, b) => a - b);
+  const getPercentile = (arr, p) => arr[Math.min(Math.floor(arr.length * p), arr.length - 1)];
+  return { successRate, percentileEnding: { p10: getPercentile(endingValues, 0.1), p25: getPercentile(endingValues, 0.25), p50: getPercentile(endingValues, 0.5), p75: getPercentile(endingValues, 0.75), p90: getPercentile(endingValues, 0.9) } };
+};
+
+const findPortfolioForSuccessRate = (params, targetRate, numSims) => {
+  let low = 0, high = params.portfolioValue * 10;
+  for (let i = 0; i < 30; i++) { const mid = (low + high) / 2; const r = runSimulation({ ...params, portfolioValue: mid }, Math.min(numSims, 2000)); if (Math.abs(r.successRate - targetRate) < 0.005) return mid; if (r.successRate < targetRate) low = mid; else high = mid; }
+  return (low + high) / 2;
+};
+
+const findSpendingForSuccessRate = (params, pv, targetRate, numSims) => {
+  let low = 0, high = params.baseSpending * 5;
+  for (let i = 0; i < 30; i++) { const mid = (low + high) / 2; const r = runSimulation({ ...params, portfolioValue: pv, baseSpending: mid }, Math.min(numSims, 2000)); if (Math.abs(r.successRate - targetRate) < 0.005) return mid; if (r.successRate > targetRate) low = mid; else high = mid; }
+  return (low + high) / 2;
+};
+
+const generateMedianProjection = (params) => {
+  const { portfolioValue, planLength, expectedReturn, baseSpending, baseInflation, goals, incomeSources, currentYear, clientAge } = params;
+  const projection = []; let portfolio = portfolioValue;
+  for (let year = 0; year <= planLength; year++) {
+    const calendarYear = currentYear + year, age = clientAge + year, startBalance = portfolio;
+    const yearSpending = year === 0 ? baseSpending : inflateValue(baseSpending, baseInflation, year);
+    let yearGoals = 0;
+    goals.forEach((g) => { const start = g.startYear, end = g.continueThrough ? currentYear + planLength : g.endYear, freq = g.frequency || 0, inf = g.customInflation !== null ? g.customInflation : baseInflation; if (freq === 0) return; if (calendarYear >= start && calendarYear <= end) { if (freq === 1) { if (calendarYear === start) yearGoals += year === 0 ? g.amount : inflateValue(g.amount, inf, year); } else { if ((calendarYear - start) % freq === 0) yearGoals += year === 0 ? g.amount : inflateValue(g.amount, inf, year); } } });
+    let yearIncome = 0;
+    incomeSources.forEach((i) => { const start = i.startYear, end = i.continueThrough ? currentYear + planLength : i.endYear, inf = i.customInflation !== null ? i.customInflation : baseInflation; if (calendarYear >= start && calendarYear <= end) yearIncome += year === 0 ? i.amount : inflateValue(i.amount, inf, year); });
+    const netWithdrawal = yearSpending + yearGoals - yearIncome, returnRate = expectedReturn, halfReturn = Math.pow(1 + expectedReturn, 0.5) - 1;
+    const midYear = portfolio * (1 + halfReturn), afterWithdraw = midYear - netWithdrawal;
+    if (afterWithdraw < 0) { projection.push({ year, calendarYear, age, startBalance, baseSpending: yearSpending, goals: yearGoals, income: yearIncome, netWithdrawal, portfolioAfterWithdrawal: 0, returnRate, returnAmount: 0, endBalance: 0 }); portfolio = 0; continue; }
+    const endBalance = afterWithdraw * (1 + halfReturn), returnAmount = endBalance - (startBalance - netWithdrawal);
+    projection.push({ year, calendarYear, age, startBalance, baseSpending: yearSpending, goals: yearGoals, income: yearIncome, netWithdrawal, portfolioAfterWithdrawal: Math.max(0, afterWithdraw), returnRate, returnAmount, endBalance: Math.max(0, endBalance) });
+    portfolio = Math.max(0, endBalance);
+  }
+  return projection;
+};
+
+const generatePDF = (inputs, results) => {
+  const { currentYear, clientAge, planLength, portfolioValue, expectedReturn, stdDev, baseInflation, baseSpending, targetSuccessRate, upperGuardrail, lowerGuardrail, goals, incomeSources, numSimulations } = inputs;
+  const { currentSuccess, upperGuardrailPortfolio, upperGuardrailSpending, lowerGuardrailPortfolio, lowerGuardrailSpending, percentileEnding, medianProjection } = results;
+  let html = '<!DOCTYPE html><html><head><title>Financial Plan</title><style>body{font-family:Arial,sans-serif;padding:40px;color:#333}h1{color:#0f4c5c}h2{color:#0f4c5c;border-bottom:2px solid #e8b059;padding-bottom:8px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin:20px 0}.card{background:#f5f5f5;padding:20px;border-radius:8px;border-left:4px solid #0f4c5c}.label{font-size:12px;color:#666;text-transform:uppercase}.value{font-size:24px;font-weight:bold;color:#0f4c5c}table{width:100%;border-collapse:collapse;margin:20px 0}th{background:#0f4c5c;color:white;padding:10px;text-align:right}th:first-child{text-align:left}td{padding:8px;border-bottom:1px solid #ddd;text-align:right}td:first-child{text-align:left}.page-break{page-break-before:always}</style></head><body>';
+  html += '<h1>Financial Plan Analysis</h1><p>Generated: ' + new Date().toLocaleDateString() + '</p>';
+  html += '<h2>Overview</h2><div class="grid"><div class="card"><div class="label">Current Year</div><div class="value">' + currentYear + '</div></div><div class="card"><div class="label">Client Age</div><div class="value">' + clientAge + '</div></div><div class="card"><div class="label">Plan Length</div><div class="value">' + planLength + ' years</div></div></div>';
+  html += '<h2>Results</h2><div class="grid"><div class="card"><div class="label">Success Probability</div><div class="value">' + (currentSuccess * 100).toFixed(1) + '%</div></div><div class="card"><div class="label">Target Rate</div><div class="value">' + (targetSuccessRate * 100).toFixed(1) + '%</div></div><div class="card"><div class="label">Median Ending</div><div class="value">' + formatCurrency(percentileEnding.p50) + '</div></div></div>';
+  html += '<h2>Guardrails</h2><div class="grid" style="grid-template-columns:1fr 1fr"><div class="card" style="border-left-color:#4caf50"><div class="label">Upper (' + (upperGuardrail * 100) + '%)</div><p>Portfolio: ' + formatCurrency(upperGuardrailPortfolio) + '</p><p>New Spending: ' + formatCurrency(upperGuardrailSpending) + '</p></div><div class="card" style="border-left-color:#ff9800"><div class="label">Lower (' + (lowerGuardrail * 100) + '%)</div><p>Portfolio: ' + formatCurrency(lowerGuardrailPortfolio) + '</p><p>New Spending: ' + formatCurrency(lowerGuardrailSpending) + '</p></div></div>';
+  html += '<div class="page-break"></div><h2>Year-by-Year Projection</h2><table><tr><th>Year</th><th>Age</th><th>Start</th><th>Spending</th><th>Goals</th><th>Income</th><th>Net</th><th>Return</th><th>End</th></tr>';
+  medianProjection.forEach(r => { html += '<tr><td>' + r.calendarYear + '</td><td>' + r.age + '</td><td>' + formatCurrency(r.startBalance) + '</td><td>' + formatCurrency(r.baseSpending) + '</td><td>' + formatCurrency(r.goals) + '</td><td>' + formatCurrency(r.income) + '</td><td>' + formatCurrency(r.netWithdrawal) + '</td><td>' + formatCurrency(r.returnAmount) + '</td><td>' + formatCurrency(r.endBalance) + '</td></tr>'; });
+  html += '</table></body></html>';
+  const blob = new Blob([html], { type: 'text/html' }), url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href = url; link.download = 'Financial_Plan.html'; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+};
+
+function App() {
+  const [currentYear, setCurrentYear] = useState(2026);
+  const [clientAge, setClientAge] = useState(60);
+  const [planLength, setPlanLength] = useState(30);
+  const [portfolioValue, setPortfolioValue] = useState(1000000);
+  const [expectedReturn, setExpectedReturn] = useState(7);
+  const [stdDev, setStdDev] = useState(12);
+  const [baseInflation, setBaseInflation] = useState(2.5);
+  const [baseSpending, setBaseSpending] = useState(40000);
+  const [targetSuccessRate, setTargetSuccessRate] = useState(80);
+  const [upperGuardrail, setUpperGuardrail] = useState(90);
+  const [lowerGuardrail, setLowerGuardrail] = useState(70);
+  const [numSimulations, setNumSimulations] = useState(5000);
+  const [goals, setGoals] = useState([]);
+  const [incomeSources, setIncomeSources] = useState([]);
+  const [results, setResults] = useState(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+
+  const addGoal = () => setGoals([...goals, { id: Date.now(), name: '', amount: 0, startYear: currentYear, frequency: 1, endYear: currentYear + planLength, continueThrough: true, customInflation: null }]);
+  const updateGoal = (id, field, value) => setGoals(goals.map(g => g.id === id ? { ...g, [field]: value } : g));
+  const removeGoal = (id) => setGoals(goals.filter(g => g.id !== id));
+  const addIncomeSource = () => setIncomeSources([...incomeSources, { id: Date.now(), name: '', amount: 0, startYear: currentYear, endYear: currentYear + planLength, continueThrough: true, customInflation: null }]);
+  const updateIncomeSource = (id, field, value) => setIncomeSources(incomeSources.map(i => i.id === id ? { ...i, [field]: value } : i));
+  const removeIncomeSource = (id) => setIncomeSources(incomeSources.filter(i => i.id !== id));
+
+  const calculate = useCallback(() => {
+    setIsCalculating(true);
+    setTimeout(() => {
+      const params = { portfolioValue, planLength, expectedReturn: expectedReturn / 100, stdDev: stdDev / 100, baseSpending, baseInflation: baseInflation / 100, goals, incomeSources, currentYear, clientAge };
+      const mainResult = runSimulation(params, numSimulations);
+      const upperPortfolio = findPortfolioForSuccessRate(params, upperGuardrail / 100, numSimulations);
+      const upperSpending = findSpendingForSuccessRate(params, upperPortfolio, targetSuccessRate / 100, numSimulations);
+      const lowerPortfolio = findPortfolioForSuccessRate(params, lowerGuardrail / 100, numSimulations);
+      const lowerSpending = findSpendingForSuccessRate(params, lowerPortfolio, targetSuccessRate / 100, numSimulations);
+      const medianProjection = generateMedianProjection(params);
+      setResults({ currentSuccess: mainResult.successRate, upperGuardrailPortfolio: upperPortfolio, upperGuardrailSpending: upperSpending, lowerGuardrailPortfolio: lowerPortfolio, lowerGuardrailSpending: lowerSpending, percentileEnding: mainResult.percentileEnding, medianProjection });
+      setIsCalculating(false);
+    }, 100);
+  }, [portfolioValue, planLength, expectedReturn, stdDev, baseSpending, baseInflation, goals, incomeSources, currentYear, clientAge, numSimulations, targetSuccessRate, upperGuardrail, lowerGuardrail]);
+
+  const exportPDF = () => { if (results) generatePDF({ currentYear, clientAge, planLength, portfolioValue, expectedReturn: expectedReturn / 100, stdDev: stdDev / 100, baseInflation: baseInflation / 100, baseSpending, targetSuccessRate: targetSuccessRate / 100, upperGuardrail: upperGuardrail / 100, lowerGuardrail: lowerGuardrail / 100, goals, incomeSources, numSimulations }, results); };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="text-center mb-10">
+          <h1 className="font-display text-5xl font-semibold mb-3 bg-gradient-to-r from-amber-200 via-yellow-300 to-amber-200 bg-clip-text text-transparent">Financial Planning Calculator</h1>
+          <p className="text-slate-400 text-lg">Monte Carlo simulation with dynamic guardrail analysis</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <div className="card card-accent p-6">
+            <h2 className="font-display text-xl font-semibold mb-5 text-amber-200">Basic Information</h2>
+            <div className="space-y-4">
+              <div><label className="block text-sm text-slate-400 mb-2">Current Year</label><input type="text" value={currentYear} onChange={e => { const v = e.target.value; if (v === '' || /^\d+$/.test(v)) setCurrentYear(v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') setCurrentYear(2026); }} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Client Age</label><input type="text" value={clientAge} onChange={e => { const v = e.target.value; if (v === '' || /^\d+$/.test(v)) setClientAge(v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') setClientAge(60); }} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Plan Length (years)</label><input type="text" value={planLength} onChange={e => { const v = e.target.value; if (v === '' || /^\d+$/.test(v)) setPlanLength(v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') setPlanLength(30); }} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Portfolio Value</label><CurrencyInput value={portfolioValue} onChange={setPortfolioValue} /></div>
+            </div>
+          </div>
+          <div className="card card-accent p-6">
+            <h2 className="font-display text-xl font-semibold mb-5 text-amber-200">Spending & Guardrails</h2>
+            <div className="space-y-4">
+              <div><label className="block text-sm text-slate-400 mb-2">Base Annual Spending</label><CurrencyInput value={baseSpending} onChange={setBaseSpending} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Target Success Rate (%)</label><PercentageInput value={targetSuccessRate} onChange={setTargetSuccessRate} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Upper Guardrail (%)</label><PercentageInput value={upperGuardrail} onChange={setUpperGuardrail} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Lower Guardrail (%)</label><PercentageInput value={lowerGuardrail} onChange={setLowerGuardrail} /></div>
+            </div>
+          </div>
+          <div className="card card-accent p-6">
+            <h2 className="font-display text-xl font-semibold mb-5 text-amber-200">Market Assumptions</h2>
+            <div className="space-y-4">
+              <div><label className="block text-sm text-slate-400 mb-2">Expected Return (%)</label><PercentageInput value={expectedReturn} onChange={setExpectedReturn} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Standard Deviation (%)</label><PercentageInput value={stdDev} onChange={setStdDev} /></div>
+              <div><label className="block text-sm text-slate-400 mb-2">Base Inflation (%)</label><PercentageInput value={baseInflation} onChange={setBaseInflation} /></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card card-accent p-6 mb-6">
+          <div className="flex justify-between items-center mb-5">
+            <h2 className="font-display text-xl font-semibold text-amber-200">Spending Goals</h2>
+            <button onClick={addGoal} className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-amber-200 text-sm font-medium">+ Add Goal</button>
+          </div>
+          {goals.length === 0 ? <p className="text-slate-500 text-center py-6">No goals added yet.</p> : goals.map(goal => (
+            <div key={goal.id} className="bg-slate-800/50 rounded-xl p-4 mb-4 border border-slate-700/50">
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 items-end">
+                <div className="col-span-2"><label className="block text-xs text-slate-400 mb-1">Name</label><input type="text" value={goal.name} onChange={e => updateGoal(goal.id, 'name', e.target.value)} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">Amount</label><CurrencyInput value={goal.amount} onChange={val => updateGoal(goal.id, 'amount', val)} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">Start Year</label><input type="number" value={goal.startYear} onChange={e => { const v = e.target.value; updateGoal(goal.id, 'startYear', v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') updateGoal(goal.id, 'startYear', currentYear); }} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">Frequency</label><input type="number" value={goal.frequency} onChange={e => { const v = e.target.value; updateGoal(goal.id, 'frequency', v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') updateGoal(goal.id, 'frequency', 1); }} min="0" /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">End Year</label><input type="number" value={goal.endYear} onChange={e => { const v = e.target.value; updateGoal(goal.id, 'endYear', v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') updateGoal(goal.id, 'endYear', currentYear + planLength); }} disabled={goal.continueThrough} /></div>
+                <div className="flex items-center gap-2"><input type="checkbox" className="checkbox-custom" checked={goal.continueThrough} onChange={e => updateGoal(goal.id, 'continueThrough', e.target.checked)} /><span className="text-xs text-slate-400">To end</span></div>
+                <div className="flex gap-2"><div className="flex-1"><label className="block text-xs text-slate-400 mb-1">Inflation</label><PercentageInputNullable value={goal.customInflation} onChange={val => updateGoal(goal.id, 'customInflation', val)} placeholder={baseInflation.toString()} /></div><button onClick={() => removeGoal(goal.id)} className="px-3 py-2 bg-red-500/20 rounded-lg text-red-300">✕</button></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="card card-accent p-6 mb-6">
+          <div className="flex justify-between items-center mb-5">
+            <h2 className="font-display text-xl font-semibold text-amber-200">Income Sources</h2>
+            <button onClick={addIncomeSource} className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-amber-200 text-sm font-medium">+ Add Income</button>
+          </div>
+          {incomeSources.length === 0 ? <p className="text-slate-500 text-center py-6">No income sources added yet.</p> : incomeSources.map(income => (
+            <div key={income.id} className="bg-slate-800/50 rounded-xl p-4 mb-4 border border-slate-700/50">
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 items-end">
+                <div className="col-span-2"><label className="block text-xs text-slate-400 mb-1">Name</label><input type="text" value={income.name} onChange={e => updateIncomeSource(income.id, 'name', e.target.value)} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">Amount</label><CurrencyInput value={income.amount} onChange={val => updateIncomeSource(income.id, 'amount', val)} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">Start Year</label><input type="number" value={income.startYear} onChange={e => { const v = e.target.value; updateIncomeSource(income.id, 'startYear', v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') updateIncomeSource(income.id, 'startYear', currentYear); }} /></div>
+                <div><label className="block text-xs text-slate-400 mb-1">End Year</label><input type="number" value={income.endYear} onChange={e => { const v = e.target.value; updateIncomeSource(income.id, 'endYear', v === '' ? '' : parseInt(v)); }} onBlur={e => { if (e.target.value === '') updateIncomeSource(income.id, 'endYear', currentYear + planLength); }} disabled={income.continueThrough} /></div>
+                <div className="flex items-center gap-2"><input type="checkbox" className="checkbox-custom" checked={income.continueThrough} onChange={e => updateIncomeSource(income.id, 'continueThrough', e.target.checked)} /><span className="text-xs text-slate-400">To end</span></div>
+                <div className="flex gap-2"><div className="flex-1"><label className="block text-xs text-slate-400 mb-1">Inflation</label><PercentageInputNullable value={income.customInflation} onChange={val => updateIncomeSource(income.id, 'customInflation', val)} placeholder={baseInflation.toString()} /></div><button onClick={() => removeIncomeSource(income.id)} className="px-3 py-2 bg-red-500/20 rounded-lg text-red-300">✕</button></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="card card-accent p-6 mb-8">
+          <h2 className="font-display text-xl font-semibold mb-5 text-amber-200">Simulation Settings</h2>
+          <div className="flex items-center gap-6">
+            <span className="text-sm text-slate-400">Simulations:</span>
+            <input type="range" min="1000" max="10000" step="500" value={numSimulations} onChange={e => setNumSimulations(parseInt(e.target.value))} className="flex-1" />
+            <span className="text-amber-200 font-semibold">{numSimulations.toLocaleString()}</span>
+          </div>
+        </div>
+
+        <div className="flex justify-center gap-4 mb-10">
+          <button onClick={calculate} disabled={isCalculating} className="btn-primary flex items-center gap-3">
+            {isCalculating ? <><div className="loading-spinner"></div>Calculating...</> : '🎲 Calculate'}
+          </button>
+          {results && <button onClick={exportPDF} className="btn-secondary">📄 Export PDF</button>}
+        </div>
+
+        {results && (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="card result-card p-6">
+                <div className="text-sm text-amber-200/70 uppercase mb-2">Success Probability</div>
+                <div className="text-4xl font-display font-semibold text-amber-100">{(results.currentSuccess * 100).toFixed(1)}%</div>
+                <div className="text-sm text-slate-400 mt-2">Based on {numSimulations.toLocaleString()} simulations</div>
+              </div>
+              <div className="card guardrail-upper p-6">
+                <div className="text-sm text-green-300/70 uppercase mb-2">Upper Guardrail ({upperGuardrail}%)</div>
+                <div className="space-y-2">
+                  <div className="flex justify-between"><span className="text-slate-300">Portfolio:</span><span className="font-semibold text-green-200">{formatCurrency(results.upperGuardrailPortfolio)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">New Spending:</span><span className="font-semibold text-green-200">{formatCurrency(results.upperGuardrailSpending)}</span></div>
+                  <div className="flex justify-between pt-2 border-t border-green-500/20"><span className="text-slate-400 text-sm">Change:</span><span className="font-semibold text-green-300">+{formatCurrency(results.upperGuardrailSpending - baseSpending)}</span></div>
+                </div>
+              </div>
+              <div className="card guardrail-lower p-6">
+                <div className="text-sm text-orange-300/70 uppercase mb-2">Lower Guardrail ({lowerGuardrail}%)</div>
+                <div className="space-y-2">
+                  <div className="flex justify-between"><span className="text-slate-300">Portfolio:</span><span className="font-semibold text-orange-200">{formatCurrency(results.lowerGuardrailPortfolio)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-300">New Spending:</span><span className="font-semibold text-orange-200">{formatCurrency(results.lowerGuardrailSpending)}</span></div>
+                  <div className="flex justify-between pt-2 border-t border-orange-500/20"><span className="text-slate-400 text-sm">Change:</span><span className="font-semibold text-orange-300">{formatCurrency(results.lowerGuardrailSpending - baseSpending)}</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card card-accent p-6">
+              <h3 className="font-display text-xl font-semibold mb-5 text-amber-200">Ending Portfolio Percentiles</h3>
+              <div className="grid grid-cols-5 gap-4">
+                {[{l:'10th',v:results.percentileEnding.p10,c:'text-red-300'},{l:'25th',v:results.percentileEnding.p25,c:'text-orange-300'},{l:'50th',v:results.percentileEnding.p50,c:'text-amber-300'},{l:'75th',v:results.percentileEnding.p75,c:'text-green-300'},{l:'90th',v:results.percentileEnding.p90,c:'text-emerald-300'}].map(p=>(
+                  <div key={p.l} className="text-center bg-slate-800/50 rounded-xl p-4">
+                    <div className="text-sm text-slate-400 mb-1">{p.l}</div>
+                    <div className={`text-xl font-semibold ${p.c}`}>{formatCurrency(p.v)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card card-accent p-6">
+              <h3 className="font-display text-xl font-semibold mb-5 text-amber-200">Year-by-Year Projection</h3>
+              <div className="overflow-x-auto" style={{maxHeight:'500px',overflowY:'auto'}}>
+                <table className="data-table">
+                  <thead style={{position:'sticky',top:0}}><tr><th>Year</th><th>Age</th><th>Start</th><th>Spending</th><th>Goals</th><th>Income</th><th>Net</th><th>Mid-Year</th><th>Return %</th><th>Return $</th><th>End</th></tr></thead>
+                  <tbody>{results.medianProjection.map(r=>(<tr key={r.year}><td>{r.calendarYear}</td><td>{r.age}</td><td>{formatCurrency(r.startBalance)}</td><td>{formatCurrency(r.baseSpending)}</td><td>{formatCurrency(r.goals)}</td><td style={{color:'#4ade80'}}>{formatCurrency(r.income)}</td><td style={{color:r.netWithdrawal>0?'#fb923c':'#4ade80'}}>{formatCurrency(r.netWithdrawal)}</td><td>{formatCurrency(r.portfolioAfterWithdrawal)}</td><td style={{color:'#60a5fa'}}>{(r.returnRate*100).toFixed(1)}%</td><td style={{color:'#60a5fa'}}>{formatCurrency(r.returnAmount)}</td><td>{formatCurrency(r.endBalance)}</td></tr>))}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
