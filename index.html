@@ -72,9 +72,9 @@ const calculateSpending = (baseSpending, year, currentYear, calendarYear, baseIn
     let growthRate = baseInflation;
 
     if (yearCal >= phase3StartYear) {
-      growthRate = baseInflation - phase3Reduction / 100;
+      growthRate = baseInflation - phase3Reduction;
     } else if (yearCal >= phase2StartYear) {
-      growthRate = baseInflation - phase2Reduction / 100;
+      growthRate = baseInflation - phase2Reduction;
     }
 
     spending *= (1 + growthRate);
