@@ -97,12 +97,13 @@ const PercentageInputNullable = ({ value, onChange, placeholder }) => {
 };
 
 const runSimulation = (params, numSims) => {
-  const { portfolioValue, planLength, expectedReturn, stdDev, baseSpending, baseInflation, goals, incomeSources, currentYear, spendingMode, phase2Year, phase2Reduction, phase3Year, phase3Reduction } = params;
+  const { portfolioValue, planLength, expectedReturn, stdDev, baseSpending, baseInflation, goals, incomeSources, currentYear, spendingMode, phase2Year, phase2Reduction, phase3Year, phase3Reduction, clientAge } = params;
   const results = [], allPaths = [];
   for (let sim = 0; sim < numSims; sim++) {
-    let portfolio = portfolioValue; let success = true; const path = [portfolio];
+    let portfolio = portfolioValue; let success = true; const path = [portfolio]; const detailedPath = [];
     for (let year = 0; year < planLength; year++) {
       const calYear = currentYear + year;
+      const startBalance = portfolio;
       let yearSpending;
       if (year === 0) {
         yearSpending = baseSpending;
@@ -128,19 +129,37 @@ const runSimulation = (params, numSims) => {
       incomeSources.forEach((i) => { const start = i.startYear, end = i.continueThrough ? currentYear + planLength : i.endYear, inf = i.customInflation !== null ? i.customInflation : baseInflation; if (calYear >= start && calYear <= end) yearIncome += year === 0 ? i.amount : inflateValue(i.amount, inf, year); });
       const netWithdrawal = yearSpending + yearGoals - yearIncome;
       const yearReturn = logNormalReturn(expectedReturn, stdDev), halfReturn = Math.pow(1 + yearReturn, 0.5) - 1;
-      portfolio *= 1 + halfReturn; portfolio -= netWithdrawal;
-      if (portfolio < 0) { portfolio = 0; success = false; path.push(0); for (let r = year + 1; r < planLength; r++) path.push(0); break; }
-      portfolio *= 1 + halfReturn; portfolio = Math.max(0, portfolio); path.push(portfolio);
+      const afterFirstHalf = portfolio * (1 + halfReturn);
+      const afterWithdrawal = afterFirstHalf - netWithdrawal;
+      
+      if (afterWithdrawal < 0) { 
+        detailedPath.push({ year, calYear, age: clientAge + year, startBalance, yearReturn, halfReturn, afterFirstHalf, yearSpending, yearGoals, yearIncome, netWithdrawal, afterWithdrawal: 0, endBalance: 0 });
+        portfolio = 0; success = false; path.push(0); 
+        for (let r = year + 1; r < planLength; r++) { 
+          path.push(0); 
+          detailedPath.push({ year: r, calYear: currentYear + r, age: clientAge + r, startBalance: 0, yearReturn: 0, halfReturn: 0, afterFirstHalf: 0, yearSpending: 0, yearGoals: 0, yearIncome: 0, netWithdrawal: 0, afterWithdrawal: 0, endBalance: 0 });
+        } 
+        break; 
+      }
+      
+      const endBalance = afterWithdrawal * (1 + halfReturn);
+      portfolio = Math.max(0, endBalance); 
+      path.push(portfolio);
+      detailedPath.push({ year, calYear, age: clientAge + year, startBalance, yearReturn, halfReturn, afterFirstHalf, yearSpending, yearGoals, yearIncome, netWithdrawal, afterWithdrawal, endBalance });
     }
-    results.push({ success, endingValue: portfolio, path }); allPaths.push(path);
+    results.push({ success, endingValue: portfolio, path, detailedPath }); allPaths.push(path);
   }
   const successRate = results.filter(r => r.success).length / numSims;
   const endingValues = results.map(r => r.endingValue).sort((a, b) => a - b);
   const getPercentile = (arr, p) => arr[Math.min(Math.floor(arr.length * p), arr.length - 1)];
   const sortedResults = [...results].sort((a, b) => a.endingValue - b.endingValue);
-  const percentilePaths = {};
-  [0.1, 0.25, 0.5, 0.75, 0.9].forEach(p => { percentilePaths[`p${Math.round(p * 100)}`] = sortedResults[Math.min(Math.floor(sortedResults.length * p), sortedResults.length - 1)].path; });
-  return { successRate, percentileEnding: { p10: getPercentile(endingValues, 0.1), p25: getPercentile(endingValues, 0.25), p50: getPercentile(endingValues, 0.5), p75: getPercentile(endingValues, 0.75), p90: getPercentile(endingValues, 0.9) }, percentilePaths };
+  const percentilePaths = {}, percentileDetails = {};
+  [0.1, 0.25, 0.5, 0.75, 0.9].forEach(p => { 
+    const idx = Math.min(Math.floor(sortedResults.length * p), sortedResults.length - 1);
+    percentilePaths[`p${Math.round(p * 100)}`] = sortedResults[idx].path; 
+    percentileDetails[`p${Math.round(p * 100)}`] = sortedResults[idx].detailedPath;
+  });
+  return { successRate, percentileEnding: { p10: getPercentile(endingValues, 0.1), p25: getPercentile(endingValues, 0.25), p50: getPercentile(endingValues, 0.5), p75: getPercentile(endingValues, 0.75), p90: getPercentile(endingValues, 0.9) }, percentilePaths, percentileDetails };
 };
 
 const findPortfolioForSuccessRate = (params, targetRate, numSims) => {
@@ -273,8 +292,8 @@ const generatePDF = (inputs, results) => {
   html += '<div class="card" style="border-left-color:#ff9800"><div class="label">Lower Guardrail (' + (lowerGuardrail * 100).toFixed(0) + '% Success)</div><div class="assumptions-row"><span>Portfolio Value</span><strong>' + formatCurrency(lowerGuardrailPortfolio) + '</strong></div><div class="assumptions-row"><span>New Base Spending</span><strong>' + formatCurrency(lowerGuardrailSpending) + '</strong></div><div class="assumptions-row"><span>Spending Change</span><strong style="color:#ff9800">' + formatCurrency(lowerGuardrailSpending - baseSpending) + '</strong></div></div></div>';
   
   // Year-by-Year Projection
-  html += '<div class="page-break"></div><h2>Year-by-Year Projection (Median Returns)</h2><table><tr><th>Year</th><th>Age</th><th>Start Balance</th><th>Spending</th><th>Goals</th><th>Income</th><th>Net Withdrawal</th><th>Return</th><th>End Balance</th></tr>';
-  medianProjection.forEach(r => { html += '<tr><td>' + r.calendarYear + '</td><td>' + r.age + '</td><td>' + formatCurrency(r.startBalance) + '</td><td>' + formatCurrency(r.baseSpending) + '</td><td>' + formatCurrency(r.goals) + '</td><td>' + formatCurrency(r.income) + '</td><td>' + formatCurrency(r.netWithdrawal) + '</td><td>' + formatCurrency(r.returnAmount) + '</td><td>' + formatCurrency(r.endBalance) + '</td></tr>'; });
+  html += '<div class="page-break"></div><h2>Year-by-Year Projection (Median Returns)</h2><table><tr><th>Year</th><th>Age</th><th>Start Balance</th><th>Spending</th><th>Goals</th><th>Income</th><th>Net Withdrawal</th><th>Return %</th><th>Return $</th><th>End Balance</th></tr>';
+  medianProjection.forEach(r => { html += '<tr><td>' + r.calendarYear + '</td><td>' + r.age + '</td><td>' + formatCurrency(r.startBalance) + '</td><td>' + formatCurrency(r.baseSpending) + '</td><td>' + formatCurrency(r.goals) + '</td><td>' + formatCurrency(r.income) + '</td><td>' + formatCurrency(r.netWithdrawal) + '</td><td>' + (r.returnRate * 100).toFixed(1) + '%</td><td>' + formatCurrency(r.returnAmount) + '</td><td>' + formatCurrency(r.endBalance) + '</td></tr>'; });
   html += '</table></body></html>';
   
   const blob = new Blob([html], { type: 'text/html' }), url = URL.createObjectURL(blob), link = document.createElement('a');
@@ -313,6 +332,10 @@ function App() {
   const updateIncomeSource = (id, field, value) => setIncomeSources(incomeSources.map(i => i.id === id ? { ...i, [field]: value } : i));
   const removeIncomeSource = (id) => setIncomeSources(incomeSources.filter(i => i.id !== id));
 
+  // Verification section state
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationPercentile, setVerificationPercentile] = useState('p50');
+
   const calculate = useCallback(() => {
     setIsCalculating(true);
     setTimeout(() => {
@@ -327,7 +350,7 @@ function App() {
       for (let y = 0; y <= planLength; y++) {
         chartData.push({ year: currentYear + y, p10: mainResult.percentilePaths.p10[y], p25: mainResult.percentilePaths.p25[y], p50: mainResult.percentilePaths.p50[y], p75: mainResult.percentilePaths.p75[y], p90: mainResult.percentilePaths.p90[y] });
       }
-      setResults({ currentSuccess: mainResult.successRate, upperGuardrailPortfolio: upperPortfolio, upperGuardrailSpending: upperSpending, lowerGuardrailPortfolio: lowerPortfolio, lowerGuardrailSpending: lowerSpending, percentileEnding: mainResult.percentileEnding, medianProjection, chartData });
+      setResults({ currentSuccess: mainResult.successRate, upperGuardrailPortfolio: upperPortfolio, upperGuardrailSpending: upperSpending, lowerGuardrailPortfolio: lowerPortfolio, lowerGuardrailSpending: lowerSpending, percentileEnding: mainResult.percentileEnding, medianProjection, chartData, percentileDetails: mainResult.percentileDetails });
       setIsCalculating(false);
     }, 100);
   }, [portfolioValue, planLength, expectedReturn, stdDev, baseSpending, baseInflation, goals, incomeSources, currentYear, clientAge, numSimulations, targetSuccessRate, upperGuardrail, lowerGuardrail, spendingMode, phase2Year, phase2Reduction, phase3Year, phase3Reduction]);
@@ -536,6 +559,91 @@ function App() {
               </Recharts.ResponsiveContainer>
             </div>
             )}
+
+            <div className="card card-accent p-6">
+              <button 
+                onClick={() => setVerificationOpen(!verificationOpen)} 
+                className="w-full flex justify-between items-center text-left"
+              >
+                <h3 className="font-display text-xl font-semibold text-amber-200">🔍 Verification Details</h3>
+                <span className="text-amber-200 text-2xl">{verificationOpen ? '−' : '+'}</span>
+              </button>
+              
+              {verificationOpen && results.percentileDetails && (
+                <div className="mt-5">
+                  <p className="text-sm text-slate-400 mb-4">
+                    This table shows the actual simulation data for a specific percentile outcome. Use this to verify the calculation logic step-by-step.
+                  </p>
+                  
+                  <div className="flex gap-2 mb-4">
+                    {[{key:'p10',label:'10th'},{key:'p25',label:'25th'},{key:'p50',label:'50th'},{key:'p75',label:'75th'},{key:'p90',label:'90th'}].map(p => (
+                      <button 
+                        key={p.key}
+                        onClick={() => setVerificationPercentile(p.key)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${verificationPercentile === p.key ? 'bg-amber-500 text-slate-900' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  <div className="bg-slate-800/70 rounded-lg p-4 mb-4">
+                    <h4 className="text-sm font-semibold text-amber-200 mb-2">Calculation Steps (each year):</h4>
+                    <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+                      <li><strong>Start Balance</strong> = Previous year's End Balance (or initial portfolio)</li>
+                      <li><strong>Half Return</strong> = √(1 + Annual Return) - 1</li>
+                      <li><strong>After 1st Half</strong> = Start Balance × (1 + Half Return)</li>
+                      <li><strong>Net Withdrawal</strong> = Spending + Goals - Income</li>
+                      <li><strong>After Withdrawal</strong> = After 1st Half - Net Withdrawal</li>
+                      <li><strong>End Balance</strong> = After Withdrawal × (1 + Half Return)</li>
+                    </ol>
+                  </div>
+                  
+                  <div className="overflow-x-auto" style={{maxHeight:'400px',overflowY:'auto'}}>
+                    <table className="data-table text-xs">
+                      <thead style={{position:'sticky',top:0}}>
+                        <tr>
+                          <th>Year</th>
+                          <th>Age</th>
+                          <th>Start</th>
+                          <th>Return %</th>
+                          <th>Half Ret %</th>
+                          <th>After 1st Half</th>
+                          <th>Spending</th>
+                          <th>Goals</th>
+                          <th>Income</th>
+                          <th>Net W/D</th>
+                          <th>After W/D</th>
+                          <th>End</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {results.percentileDetails[verificationPercentile]?.map((r, idx) => (
+                          <tr key={idx}>
+                            <td>{r.calYear}</td>
+                            <td>{r.age}</td>
+                            <td>{formatCurrency(r.startBalance)}</td>
+                            <td style={{color: r.yearReturn >= 0 ? '#4ade80' : '#f87171'}}>{(r.yearReturn * 100).toFixed(2)}%</td>
+                            <td style={{color: r.halfReturn >= 0 ? '#4ade80' : '#f87171'}}>{(r.halfReturn * 100).toFixed(2)}%</td>
+                            <td>{formatCurrency(r.afterFirstHalf)}</td>
+                            <td>{formatCurrency(r.yearSpending)}</td>
+                            <td>{formatCurrency(r.yearGoals)}</td>
+                            <td style={{color:'#4ade80'}}>{formatCurrency(r.yearIncome)}</td>
+                            <td style={{color: r.netWithdrawal > 0 ? '#fb923c' : '#4ade80'}}>{formatCurrency(r.netWithdrawal)}</td>
+                            <td>{formatCurrency(r.afterWithdrawal)}</td>
+                            <td style={{fontWeight:'bold'}}>{formatCurrency(r.endBalance)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  <p className="text-xs text-slate-500 mt-3">
+                    Note: This is actual simulation data with random returns. The {verificationPercentile === 'p50' ? '50th' : verificationPercentile === 'p10' ? '10th' : verificationPercentile === 'p25' ? '25th' : verificationPercentile === 'p75' ? '75th' : '90th'} percentile simulation ended with {formatCurrency(results.percentileEnding[verificationPercentile])}.
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="card card-accent p-6">
               <h3 className="font-display text-xl font-semibold mb-5 text-amber-200">Year-by-Year Projection</h3>
