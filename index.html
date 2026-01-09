@@ -163,13 +163,15 @@ const runSimulation = (params, numSims) => {
 };
 
 const findPortfolioForSuccessRate = (params, targetRate, numSims) => {
-  let low = 0, high = params.portfolioValue * 10;
+  // Upper limit based on spending (e.g., 50x spending as max reasonable portfolio needed)
+  let low = 0, high = Math.max(params.portfolioValue * 10, params.baseSpending * 50);
   for (let i = 0; i < 30; i++) { const mid = (low + high) / 2; const r = runSimulation({ ...params, portfolioValue: mid }, Math.min(numSims, 2000)); if (Math.abs(r.successRate - targetRate) < 0.005) return mid; if (r.successRate < targetRate) low = mid; else high = mid; }
   return (low + high) / 2;
 };
 
 const findSpendingForSuccessRate = (params, pv, targetRate, numSims) => {
-  let low = 0, high = params.baseSpending * 5;
+  // Upper limit based on portfolio value (e.g., 20% of portfolio as max reasonable spending)
+  let low = 0, high = Math.max(params.baseSpending * 10, pv * 0.2);
   for (let i = 0; i < 30; i++) { const mid = (low + high) / 2; const r = runSimulation({ ...params, portfolioValue: pv, baseSpending: mid }, Math.min(numSims, 2000)); if (Math.abs(r.successRate - targetRate) < 0.005) return mid; if (r.successRate > targetRate) low = mid; else high = mid; }
   return (low + high) / 2;
 };
@@ -341,10 +343,32 @@ function App() {
     setTimeout(() => {
       const params = { portfolioValue, planLength, expectedReturn: expectedReturn / 100, stdDev: stdDev / 100, baseSpending, baseInflation: baseInflation / 100, goals, incomeSources, currentYear, clientAge, spendingMode, phase2Year, phase2Reduction: phase2Reduction / 100, phase3Year, phase3Reduction: phase3Reduction / 100 };
       const mainResult = runSimulation(params, numSimulations);
-      const upperPortfolio = findPortfolioForSuccessRate(params, upperGuardrail / 100, numSimulations);
-      const upperSpending = findSpendingForSuccessRate(params, upperPortfolio, targetSuccessRate / 100, numSimulations);
-      const lowerPortfolio = findPortfolioForSuccessRate(params, lowerGuardrail / 100, numSimulations);
-      const lowerSpending = findSpendingForSuccessRate(params, lowerPortfolio, targetSuccessRate / 100, numSimulations);
+      const currentSuccessRate = mainResult.successRate;
+      
+      // Upper Guardrail Logic
+      let upperPortfolio, upperSpending;
+      if (currentSuccessRate >= upperGuardrail / 100) {
+        // Already above upper guardrail - keep portfolio, find higher spending at target rate
+        upperPortfolio = portfolioValue;
+        upperSpending = findSpendingForSuccessRate(params, portfolioValue, targetSuccessRate / 100, numSimulations);
+      } else {
+        // Below upper guardrail - find portfolio that hits upper guardrail, then spending at target
+        upperPortfolio = findPortfolioForSuccessRate(params, upperGuardrail / 100, numSimulations);
+        upperSpending = findSpendingForSuccessRate(params, upperPortfolio, targetSuccessRate / 100, numSimulations);
+      }
+      
+      // Lower Guardrail Logic
+      let lowerPortfolio, lowerSpending;
+      if (currentSuccessRate <= lowerGuardrail / 100) {
+        // Already below lower guardrail - keep portfolio, find lower spending at target rate
+        lowerPortfolio = portfolioValue;
+        lowerSpending = findSpendingForSuccessRate(params, portfolioValue, targetSuccessRate / 100, numSimulations);
+      } else {
+        // Above lower guardrail - find portfolio that hits lower guardrail, then spending at target
+        lowerPortfolio = findPortfolioForSuccessRate(params, lowerGuardrail / 100, numSimulations);
+        lowerSpending = findSpendingForSuccessRate(params, lowerPortfolio, targetSuccessRate / 100, numSimulations);
+      }
+      
       const medianProjection = generateMedianProjection(params);
       const chartData = [];
       for (let y = 0; y <= planLength; y++) {
